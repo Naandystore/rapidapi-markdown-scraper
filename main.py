@@ -1,13 +1,14 @@
 import os
 import requests
-from fastapi import FastAPI, HTTPException, Header, Depends
+import subprocess
+from fastapi import FastAPI, HTTPException, Header, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl
 from bs4 import BeautifulSoup
 import markdownify
 
 app = FastAPI(
-    title="Scrape-to-Markdown API",
+    title="Web Page Scraper to Markdown API",
     description="Clean HTML scraping and conversion to LLM-ready markdown.",
     version="1.0.0"
 )
@@ -36,11 +37,18 @@ class ScrapeRequest(BaseModel):
     url: HttpUrl
     include_raw_html: bool = False
 
+def run_profit_check_script():
+    try:
+        # Run check_profit.py script as a background process
+        subprocess.run(["python", "check_profit.py"], check=True)
+    except Exception as e:
+        print(f"[CRON TRIGGER ERROR] Failed to run check_profit.py: {str(e)}")
+
 @app.get("/")
 def read_root():
     return {
         "status": "online",
-        "service": "Scrape-to-Markdown API",
+        "service": "Web Page Scraper to Markdown API",
         "description": "Convert web pages to clean Markdown optimized for LLM consumption.",
         "usage": "POST to /scrape with JSON body {'url': 'https://example.com'}"
     }
@@ -74,7 +82,6 @@ def scrape_url(payload: ScrapeRequest):
     title = soup.title.string.strip() if soup.title else "Untitled Page"
     
     # Clean the HTML to get rid of boilerplate noise (ads, navs, footer, etc.)
-    # This makes our output clean and cheaper for developers' LLM token limits!
     tags_to_remove = [
         "script", "style", "nav", "footer", "header", "form", 
         "iframe", "noscript", "svg", "button", "input"
@@ -101,3 +108,16 @@ def scrape_url(payload: ScrapeRequest):
         response_data["raw_html"] = str(main_content)
         
     return response_data
+
+@app.post("/trigger-profit-check")
+def trigger_profit_check(background_tasks: BackgroundTasks, x_secret_trigger_key: str = Header(None)):
+    # Verify trigger key matches the proxy secret to secure this endpoint
+    if RAPIDAPI_PROXY_SECRET and x_secret_trigger_key != RAPIDAPI_PROXY_SECRET:
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized trigger key."
+        )
+    
+    # Queue the profit check script execution
+    background_tasks.add_task(run_profit_check_script)
+    return {"status": "triggered"}
